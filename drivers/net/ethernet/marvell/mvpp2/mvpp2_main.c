@@ -3618,9 +3618,10 @@ static void mvpp2_irqs_deinit(struct mvpp2_port *port)
 	}
 }
 
-static bool mvpp22_rss_is_supported(void)
+static bool mvpp22_rss_is_supported(struct mvpp2_port *port)
 {
-	return queue_mode == MVPP2_QDIST_MULTI_MODE;
+	return queue_mode == MVPP2_QDIST_MULTI_MODE &&
+		!(port->flags & MVPP2_F_LOOPBACK);
 }
 
 static int mvpp2_open(struct net_device *dev)
@@ -4223,7 +4224,7 @@ static int mvpp2_ethtool_get_rxnfc(struct net_device *dev,
 	struct mvpp2_port *port = netdev_priv(dev);
 	int ret = 0, i, loc = 0;
 
-	if (!mvpp22_rss_is_supported())
+	if (!mvpp22_rss_is_supported(port))
 		return -EOPNOTSUPP;
 
 	switch (info->cmd) {
@@ -4258,7 +4259,7 @@ static int mvpp2_ethtool_set_rxnfc(struct net_device *dev,
 	struct mvpp2_port *port = netdev_priv(dev);
 	int ret = 0;
 
-	if (!mvpp22_rss_is_supported())
+	if (!mvpp22_rss_is_supported(port))
 		return -EOPNOTSUPP;
 
 	switch (info->cmd) {
@@ -4279,7 +4280,9 @@ static int mvpp2_ethtool_set_rxnfc(struct net_device *dev,
 
 static u32 mvpp2_ethtool_get_rxfh_indir_size(struct net_device *dev)
 {
-	return mvpp22_rss_is_supported() ? MVPP22_RSS_TABLE_ENTRIES : 0;
+	struct mvpp2_port *port = netdev_priv(dev);
+
+	return mvpp22_rss_is_supported(port) ? MVPP22_RSS_TABLE_ENTRIES : 0;
 }
 
 static int mvpp2_ethtool_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
@@ -4288,7 +4291,7 @@ static int mvpp2_ethtool_get_rxfh(struct net_device *dev, u32 *indir, u8 *key,
 	struct mvpp2_port *port = netdev_priv(dev);
 	int ret = 0;
 
-	if (!mvpp22_rss_is_supported())
+	if (!mvpp22_rss_is_supported(port))
 		return -EOPNOTSUPP;
 
 	if (indir)
@@ -4306,7 +4309,7 @@ static int mvpp2_ethtool_set_rxfh(struct net_device *dev, const u32 *indir,
 	struct mvpp2_port *port = netdev_priv(dev);
 	int ret = 0;
 
-	if (!mvpp22_rss_is_supported())
+	if (!mvpp22_rss_is_supported(port))
 		return -EOPNOTSUPP;
 
 	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_CRC32)
@@ -4327,7 +4330,7 @@ static int mvpp2_ethtool_get_rxfh_context(struct net_device *dev, u32 *indir,
 	struct mvpp2_port *port = netdev_priv(dev);
 	int ret = 0;
 
-	if (!mvpp22_rss_is_supported())
+	if (!mvpp22_rss_is_supported(port))
 		return -EOPNOTSUPP;
 	if (rss_context >= MVPP22_N_RSS_TABLES)
 		return -EINVAL;
@@ -4349,7 +4352,7 @@ static int mvpp2_ethtool_set_rxfh_context(struct net_device *dev,
 	struct mvpp2_port *port = netdev_priv(dev);
 	int ret;
 
-	if (!mvpp22_rss_is_supported())
+	if (!mvpp22_rss_is_supported(port))
 		return -EOPNOTSUPP;
 
 	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_CRC32)
@@ -4651,7 +4654,7 @@ static int mvpp2_port_init(struct mvpp2_port *port)
 	mvpp2_cls_oversize_rxq_set(port);
 	mvpp2_cls_port_config(port);
 
-	if (mvpp22_rss_is_supported())
+	if (mvpp22_rss_is_supported(port))
 		mvpp22_port_rss_init(port);
 
 	/* Provide an initial Rx packet size */
@@ -5422,7 +5425,7 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 	dev->hw_features |= features | NETIF_F_RXCSUM | NETIF_F_GRO |
 			    NETIF_F_HW_VLAN_CTAG_FILTER;
 
-	if (mvpp22_rss_is_supported()) {
+	if (mvpp22_rss_is_supported(port)) {
 		dev->hw_features |= NETIF_F_RXHASH;
 		dev->features |= NETIF_F_NTUPLE;
 	}
