@@ -502,6 +502,18 @@ static int mv3310_resume(struct phy_device *phydev)
 	return mv3310_hwmon_config(phydev, true);
 }
 
+static void mv3310_config_init_clear_power_down(struct phy_device *phydev) {
+	// TODO: move this to generic 10g code (the first two, at least).
+	// Copper PCS
+	mv3310_modify(phydev, MDIO_MMD_PCS, MDIO_CTRL1, MDIO_CTRL1_LPOWER, 0);
+	// Copper Control
+	mv3310_modify(phydev, MDIO_MMD_PMAPMD, MDIO_CTRL1, MDIO_CTRL1_LPOWER, 0);
+	// (HOST) 10GBASE-R PCS Control
+	mv3310_modify(phydev, MDIO_MMD_PHYXS, 0x1000+MDIO_CTRL1, MDIO_CTRL1_LPOWER, 0);
+	// (HOST) SGMII control
+	mv3310_modify(phydev, MDIO_MMD_PHYXS, 0x2000+MDIO_CTRL1, MDIO_CTRL1_LPOWER, 0);
+}
+
 static int mv3310_config_init(struct phy_device *phydev)
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported) = { 0, };
@@ -519,6 +531,8 @@ static int mv3310_config_init(struct phy_device *phydev)
 
 	mv3310_of_config_init(phydev);
 	mv_set_adv_config_init(phydev);
+
+	mv3310_config_init_clear_power_down(phydev);
 
 	__set_bit(ETHTOOL_LINK_MODE_Pause_BIT, supported);
 	__set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, supported);
