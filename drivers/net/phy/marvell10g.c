@@ -88,6 +88,8 @@ enum {
 	MV_V2_TEMP_CTRL_DISABLE	= 0xc000,
 	MV_V2_TEMP		= 0xf08c,
 	MV_V2_TEMP_UNKNOWN	= 0x9600, /* unknown function */
+
+	MV_V2_PORT_CTRL 		= 0xF001,
 };
 
 struct mv3310_priv {
@@ -98,6 +100,10 @@ struct mv3310_priv {
 };
 
 #define MV_PMAPMD_XG_EXT_SWAP_PAIRS	BIT(0)
+
+#define MV_V2_PORT_CTRL_MAC_MODE_MASK			(BIT(0) | BIT(1) | BIT(2))
+#define MV_V2_PORT_CTRL_MAC_MODE_SGMII_XFI_AUTONEG_ON 	(BIT(2))
+#define MV_V2_PORT_CTRL_MAC_MODE_XFI			(BIT(1) | BIT(2))
 
 static int mv3310_modify(struct phy_device *phydev, int devad, u16 reg,
 			 u16 mask, u16 bits)
@@ -686,28 +692,51 @@ static int mv3310_aneg_done(struct phy_device *phydev)
 	return genphy_c45_aneg_done(phydev);
 }
 
+static int mv3310_get_phy_mac_mode(struct phy_device *phydev) {
+	int val;
+
+	val = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL);
+	if (val < 0)
+		return val;
+
+	return val & MV_V2_PORT_CTRL_MAC_MODE_MASK;
+}
+
 static void mv_update_interface(struct phy_device *phydev)
 {
-	if ((phydev->interface == PHY_INTERFACE_MODE_SGMII ||
-	     phydev->interface == PHY_INTERFACE_MODE_10GKR ||
-	     phydev->interface == PHY_INTERFACE_MODE_5GKR ||
-	     phydev->interface == PHY_INTERFACE_MODE_2500BASET) &&
-	    phydev->link) {
-		/* The PHY automatically switches its serdes interface (and
-		 * active PHYXS instance) between Cisco SGMII and 10GBase-KR
-		 * modes according to the speed.  Florian suggests setting
-		 * phydev->interface to communicate this to the MAC. Only do
-		 * this if we are already in either SGMII or 10GBase-KR mode.
+	int mac_mode = mv3310_get_phy_mac_mode(phydev);
+
+	switch(mac_mode) {
+	case MV_V2_PORT_CTRL_MAC_MODE_SGMII_XFI_AUTONEG_ON:
+		if ((phydev->interface == PHY_INTERFACE_MODE_SGMII ||
+			 phydev->interface == PHY_INTERFACE_MODE_10GKR ||
+			 phydev->interface == PHY_INTERFACE_MODE_5GKR ||
+			 phydev->interface == PHY_INTERFACE_MODE_2500BASET) &&
+			phydev->link) {
+			/* The PHY automatically switches its serdes interface (and
+			 * active PHYXS instance) between Cisco SGMII and 10GBase-KR
+			 * modes according to the speed.  Florian suggests setting
+			 * phydev->interface to communicate this to the MAC. Only do
+			 * this if we are already in either SGMII or 10GBase-KR mode.
+			 */
+			if (phydev->speed == SPEED_10000)
+				phydev->interface = PHY_INTERFACE_MODE_10GKR;
+			else if (phydev->speed == SPEED_5000)
+				phydev->interface = PHY_INTERFACE_MODE_5GKR;
+			else if (phydev->speed == SPEED_2500)
+				phydev->interface = PHY_INTERFACE_MODE_2500BASET;
+			else if (phydev->speed >= SPEED_10 &&
+				 phydev->speed < SPEED_2500)
+				phydev->interface = PHY_INTERFACE_MODE_SGMII;
+		}
+		break;
+	case MV_V2_PORT_CTRL_MAC_MODE_XFI:
+		/* In XFI mode, we would always use XFI, even
+		 * if the other side is 1G/2.5G/5G. The PHY will handle
+		 * the translation for us.
 		 */
-		if (phydev->speed == SPEED_10000)
-			phydev->interface = PHY_INTERFACE_MODE_10GKR;
-		else if (phydev->speed == SPEED_5000)
-			phydev->interface = PHY_INTERFACE_MODE_5GKR;
-		else if (phydev->speed == SPEED_2500)
-			phydev->interface = PHY_INTERFACE_MODE_2500BASET;
-		else if (phydev->speed >= SPEED_10 &&
-			 phydev->speed < SPEED_2500)
-			phydev->interface = PHY_INTERFACE_MODE_SGMII;
+		phydev->interface = PHY_INTERFACE_MODE_10GKR;
+		break;
 	}
 }
 
