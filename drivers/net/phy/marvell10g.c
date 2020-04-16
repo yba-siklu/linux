@@ -173,6 +173,9 @@ static int mv3310_hwmon_config(struct phy_device *phydev, bool enable)
 	u16 val;
 	int ret;
 
+	if (phydev->drv->phy_id != MARVELL_PHY_ID_88X3310)
+		return 0;
+
 	ret = phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_TEMP,
 			    MV_V2_TEMP_UNKNOWN);
 	if (ret < 0)
@@ -197,6 +200,9 @@ static int mv3310_hwmon_probe(struct phy_device *phydev)
 	struct device *dev = &phydev->mdio.dev;
 	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
 	int i, j, ret;
+
+	if (phydev->drv->phy_id != MARVELL_PHY_ID_88X3310)
+		return 0;
 
 	priv->hwmon_name = devm_kstrdup(dev, dev_name(dev), GFP_KERNEL);
 	if (!priv->hwmon_name)
