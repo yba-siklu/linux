@@ -55,6 +55,8 @@ enum {
 
 	MV_PMAPMD_XG_EXT	= 0xc000,
 
+	MV_PCS_TEMP		= 0x8042,
+
 	/* These registers appear at 0x800X and 0xa00X - the 0xa00X control
 	 * registers appear to set themselves to the 0x800X when AN is
 	 * restarted, but status registers appear readable from either.
@@ -108,6 +110,14 @@ static umode_t mv3310_hwmon_is_visible(const void *data,
 	return 0;
 }
 
+static int mv3310_hwmon_read_temp_reg(struct phy_device *phydev)
+{
+	if (phydev->drv->phy_id == MARVELL_PHY_ID_88X3310)
+		return phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_TEMP);
+	else /* MARVELL_PHY_ID_88E2110 */
+		return phy_read_mmd(phydev, MDIO_MMD_PCS, MV_PCS_TEMP);
+}
+
 static int mv3310_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 			     u32 attr, int channel, long *value)
 {
@@ -120,7 +130,7 @@ static int mv3310_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 	}
 
 	if (type == hwmon_temp && attr == hwmon_temp_input) {
-		temp = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_TEMP);
+		temp = mv3310_hwmon_read_temp_reg(phydev);
 		if (temp < 0)
 			return temp;
 
@@ -201,7 +211,8 @@ static int mv3310_hwmon_probe(struct phy_device *phydev)
 	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
 	int i, j, ret;
 
-	if (phydev->drv->phy_id != MARVELL_PHY_ID_88X3310)
+	if (phydev->drv->phy_id != MARVELL_PHY_ID_88X3310 &&
+			phydev->drv->phy_id != MARVELL_PHY_ID_88E2110)
 		return 0;
 
 	priv->hwmon_name = devm_kstrdup(dev, dev_name(dev), GFP_KERNEL);
