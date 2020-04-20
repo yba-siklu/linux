@@ -356,15 +356,9 @@ out:
 	return ret;
 }
 
-static int mv3310_probe(struct phy_device *phydev)
+static int mv3310_check_firmware(struct phy_device *phydev)
 {
-	struct mv3310_priv *priv;
-	u32 mmd_mask = MDIO_DEVS_PMAPMD | MDIO_DEVS_AN;
 	int ret;
-
-	if (!phydev->is_c45 ||
-	    (phydev->c45_ids.devices_in_package & mmd_mask) != mmd_mask)
-		return -ENODEV;
 
 	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_BOOT);
 	if (ret < 0)
@@ -381,6 +375,23 @@ static int mv3310_probe(struct phy_device *phydev)
 		if (ret < 0)
 			return ret;
 	}
+
+	return 0;
+}
+
+static int mv3310_probe(struct phy_device *phydev)
+{
+	struct mv3310_priv *priv;
+	u32 mmd_mask = MDIO_DEVS_PMAPMD | MDIO_DEVS_AN;
+	int ret;
+
+	if (!phydev->is_c45 ||
+	    (phydev->c45_ids.devices_in_package & mmd_mask) != mmd_mask)
+		return -ENODEV;
+
+	ret = mv3310_check_firmware(phydev);
+	if (ret < 0)
+		return ret;
 
 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -478,6 +489,12 @@ static void mv_set_adv_config_init(struct phy_device *phydev)
 
 static int mv3310_resume(struct phy_device *phydev)
 {
+	int ret;
+
+	ret = mv3310_check_firmware(phydev);
+	if (ret < 0)
+		return ret;
+
 	return mv3310_hwmon_config(phydev, true);
 }
 
@@ -894,6 +911,8 @@ static struct phy_driver mv3310_drivers[] = {
 				  SUPPORTED_Autoneg |
 				  SUPPORTED_TP,
 		.probe		= mv3310_probe,
+		.suspend	= mv3310_suspend,
+		.resume		= mv3310_resume,
 		.soft_reset	= gen10g_no_soft_reset,
 		.config_init	= mv3310_config_init,
 		.config_aneg	= mv3310_config_aneg,
