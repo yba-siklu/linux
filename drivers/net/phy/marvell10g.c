@@ -389,9 +389,11 @@ static int mv3310_probe(struct phy_device *phydev)
 	    (phydev->c45_ids.devices_in_package & mmd_mask) != mmd_mask)
 		return -ENODEV;
 
+#if 0
 	ret = mv3310_check_firmware(phydev);
 	if (ret < 0)
 		return ret;
+#endif
 
 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -399,6 +401,7 @@ static int mv3310_probe(struct phy_device *phydev)
 
 	dev_set_drvdata(&phydev->mdio.dev, priv);
 
+#if 0
 	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_FW_VER0);
 	if (ret < 0)
 		return ret;
@@ -414,6 +417,7 @@ static int mv3310_probe(struct phy_device *phydev)
 	dev_info(&phydev->mdio.dev, "Firmware version %u.%u.%u.%u\n",
 		    priv->firmware_ver >> 24, (priv->firmware_ver >> 16) & 255,
 		    (priv->firmware_ver >> 8) & 255, priv->firmware_ver & 255);
+#endif
 
 	ret = mv3310_hwmon_probe(phydev);
 	if (ret)
