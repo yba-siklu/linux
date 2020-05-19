@@ -307,6 +307,27 @@ static int mv3310_write_firmware(struct phy_device *phydev, const u8 *data,
 	return 0;
 }
 
+static void mv3310_report_firmware_version(struct phy_device *phydev) {
+	int ret;
+	u32 firmware_version;
+
+	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_FW_VER0);
+	if (ret < 0)
+		return ret;
+
+	firmware_version = ret << 16;
+
+	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_FW_VER1);
+	if (ret < 0)
+		return;
+
+	firmware_version |= ret;
+
+	dev_info(&phydev->mdio.dev, "Firmware version %u.%u.%u.%u\n",
+		 firmware_version >> 24, (firmware_version >> 16) & 255,
+		 (firmware_version >> 8) & 255, firmware_version & 255);
+}
+
 static int mv3310_load_firmware(struct phy_device *phydev)
 {
 	const struct firmware *fw_entry;
@@ -355,6 +376,8 @@ static int mv3310_load_firmware(struct phy_device *phydev)
 			MV_PMA_BOOT_FW_LOADED, MV_PMA_BOOT_FW_LOADED);
 
 	msleep(100);
+
+	mv3310_report_firmware_version(phydev);
 
 out:
 	release_firmware(fw_entry);
@@ -406,24 +429,6 @@ static int mv3310_probe(struct phy_device *phydev)
 		return -ENOMEM;
 
 	dev_set_drvdata(&phydev->mdio.dev, priv);
-
-#if 0
-	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_FW_VER0);
-	if (ret < 0)
-		return ret;
-
-	priv->firmware_ver = ret << 16;
-
-	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_FW_VER1);
-	if (ret < 0)
-		return ret;
-
-	priv->firmware_ver |= ret;
-
-	dev_info(&phydev->mdio.dev, "Firmware version %u.%u.%u.%u\n",
-		    priv->firmware_ver >> 24, (priv->firmware_ver >> 16) & 255,
-		    (priv->firmware_ver >> 8) & 255, priv->firmware_ver & 255);
-#endif
 
 	ret = mv3310_hwmon_probe(phydev);
 	if (ret)
