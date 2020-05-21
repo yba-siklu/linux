@@ -93,8 +93,6 @@ enum {
 };
 
 struct mv3310_priv {
-	u32 firmware_ver;
-
 	struct device *hwmon_dev;
 	char *hwmon_name;
 };
