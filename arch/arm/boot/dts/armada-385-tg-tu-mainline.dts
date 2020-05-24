@@ -12,9 +12,9 @@
 / {
 	aliases {
 		/* So that mvebu u-boot can update the MAC addresses */
-		ethernet1 = &eth0;
-		ethernet2 = &eth1;
-		ethernet3 = &eth2;
+		ethernet0 = &eth0;
+		ethernet1 = &eth1;
+		ethernet2 = &eth2;
 		mdio-gpio0 = &gpio_mdio;
 	};
 

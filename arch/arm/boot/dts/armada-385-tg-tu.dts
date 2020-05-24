@@ -1,5 +1,18 @@
 #include "armada-385-tg-tu-mainline.dts"
 
+/ {
+	/* Ugly hack to make MAC address assignment work for WiGig */
+	aliases {
+		ethernet3 = &wigig0;
+	};
+
+	wigig_devices {
+		wigig0: wigig@0 {
+			pci-bus = "0000:02:00.0";
+		};
+	};
+};
+
 /* No comphy nodes in Marvell's kernel armada-38x.dtsi */
 
 &eth0 {
