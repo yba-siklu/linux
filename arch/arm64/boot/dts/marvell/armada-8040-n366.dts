@@ -144,6 +144,7 @@
 		nand-rb = <0>;
 		nand-ecc-step-size = <512>;
 		nand-ecc-strength = <8>;
+		nand-on-flash-bbt;
 	};
 };
 
