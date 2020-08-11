@@ -9423,10 +9423,6 @@ int register_netdevice(struct net_device *dev)
 	BUG_ON(dev->reg_state != NETREG_UNINITIALIZED);
 	BUG_ON(!net);
 
-	ret = ethtool_check_ops(dev->ethtool_ops);
-	if (ret)
-		return ret;
-
 	spin_lock_init(&dev->addr_list_lock);
 	netdev_set_addr_lockdep_class(dev);
 
