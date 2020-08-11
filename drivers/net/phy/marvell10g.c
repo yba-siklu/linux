@@ -28,15 +28,26 @@
 #include <linux/marvell_phy.h>
 #include <linux/phy.h>
 #include <linux/sfp.h>
+#include <linux/firmware.h>
 
 #define MV_PHY_ALASKA_NBT_QUIRK_MASK	0xfffffffe
 #define MV_PHY_ALASKA_NBT_QUIRK_REV	(MARVELL_PHY_ID_88X3310 | 0xa)
+
+#define MV_FIRMWARE_HEADER_SIZE		32
 
 enum {
 	MV_PMA_FW_VER0		= 0xc011,
 	MV_PMA_FW_VER1		= 0xc012,
 	MV_PMA_BOOT		= 0xc050,
 	MV_PMA_BOOT_FATAL	= BIT(0),
+	MV_PMA_BOOT_PROGRESS_MASK = 0x0006,
+	MV_PMA_BOOT_WAITING	= 0x0002,
+	MV_PMA_BOOT_FW_LOADED	= BIT(6),
+
+	MV_PCS_FW_LOW_WORD	= 0xd0f0,
+	MV_PCS_FW_HIGH_WORD	= 0xd0f1,
+	MV_PCS_RAM_DATA		= 0xd0f2,
+	MV_PCS_RAM_CHECKSUM	= 0xd0f3,
 
 	MV_PCS_BASE_T		= 0x0000,
 	MV_PCS_BASE_R		= 0x1000,
@@ -80,6 +91,8 @@ enum {
 	MV_V2_PORT_CTRL		= 0xf001,
 	MV_V2_PORT_CTRL_SWRST	= BIT(15),
 	MV_V2_PORT_CTRL_PWRDOWN = BIT(11),
+	MV_V2_PORT_MAC_TYPE_MASK = 0x7,
+	MV_V2_PORT_MAC_TYPE_RATE_MATCH = 0x6,
 	/* Temperature control/read registers (88X3310 only) */
 	MV_V2_TEMP_CTRL		= 0xf08a,
 	MV_V2_TEMP_CTRL_MASK	= 0xc000,
@@ -91,6 +104,8 @@ enum {
 
 struct mv3310_priv {
 	u32 firmware_ver;
+	bool firmware_failed;
+	bool rate_match;
 
 	struct device *hwmon_dev;
 	char *hwmon_name;
@@ -263,10 +278,16 @@ static int mv3310_power_down(struct phy_device *phydev)
 				MV_V2_PORT_CTRL_PWRDOWN);
 }
 
+static int mv3310_check_firmware(struct phy_device *phydev);
+
 static int mv3310_power_up(struct phy_device *phydev)
 {
 	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
 	int ret;
+
+	ret = mv3310_check_firmware(phydev);
+	if (ret < 0)
+		return ret;
 
 	ret = phy_clear_bits_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL,
 				 MV_V2_PORT_CTRL_PWRDOWN);
@@ -275,8 +296,10 @@ static int mv3310_power_up(struct phy_device *phydev)
 	    priv->firmware_ver < 0x00030000)
 		return ret;
 
-	return phy_set_bits_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL,
+	ret = phy_set_bits_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL,
 				MV_V2_PORT_CTRL_SWRST);
+	msleep(100);
+	return ret;
 }
 
 static int mv3310_reset(struct phy_device *phydev, u32 unit)
@@ -363,37 +386,84 @@ static int mv3310_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
 	return 0;
 }
 
-static const struct sfp_upstream_ops mv3310_sfp_ops = {
-	.attach = phy_sfp_attach,
-	.detach = phy_sfp_detach,
-	.module_insert = mv3310_sfp_insert,
-};
-
-static int mv3310_probe(struct phy_device *phydev)
+static int mv3310_write_firmware(struct phy_device *phydev, const u8 *data,
+		unsigned int size)
 {
-	struct mv3310_priv *priv;
-	u32 mmd_mask = MDIO_DEVS_PMAPMD | MDIO_DEVS_AN;
+	unsigned int low_byte, high_byte;
+	u16 checksum = 0, ram_checksum;
+	unsigned int i = 0;
 	int ret;
 
-	if (!phydev->is_c45 ||
-	    (phydev->c45_ids.devices_in_package & mmd_mask) != mmd_mask)
-		return -ENODEV;
+	while (i < size) {
+		low_byte = data[i++];
+		high_byte = data[i++];
+		checksum += low_byte + high_byte;
+		ret = phy_write_mmd(phydev, MDIO_MMD_PCS, MV_PCS_RAM_DATA,
+				(high_byte << 8) | low_byte);
+		if (ret < 0)
+			return ret;
+		cond_resched();
+	}
 
-	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_BOOT);
+	ram_checksum = phy_read_mmd(phydev, MDIO_MMD_PCS, MV_PCS_RAM_CHECKSUM);
+	if (ram_checksum != checksum) {
+		dev_err(&phydev->mdio.dev, "firmware checksum failed");
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static int mv3310_load_firmware(struct phy_device *phydev)
+{
+	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+	const struct firmware *fw_entry;
+	char *fw_file;
+	int ret;
+
+	switch (phydev->drv->phy_id) {
+	case MARVELL_PHY_ID_88X3310:
+		fw_file = "mrvl/x3310fw.hdr";
+		break;
+	case MARVELL_PHY_ID_88E2110:
+		fw_file = "mrvl/e21x0fw.hdr";
+		break;
+	default:
+		dev_warn(&phydev->mdio.dev, "unknown firmware file for %s PHY",
+				phydev->drv->name);
+		return -EINVAL;
+	}
+
+	ret = request_firmware(&fw_entry, fw_file, &phydev->mdio.dev);
 	if (ret < 0)
 		return ret;
 
-	if (ret & MV_PMA_BOOT_FATAL) {
-		dev_warn(&phydev->mdio.dev,
-			 "PHY failed to boot firmware, status=%04x\n", ret);
-		return -ENODEV;
+	/* Firmware size must be larger than header, and even */
+	if (fw_entry->size <= MV_FIRMWARE_HEADER_SIZE ||
+			(fw_entry->size % 2) != 0) {
+		dev_err(&phydev->mdio.dev, "firmware file invalid");
+		release_firmware(fw_entry);
+		return -EINVAL;
 	}
 
-	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv)
-		return -ENOMEM;
+	/* Clear checksum register */
+	phy_read_mmd(phydev, MDIO_MMD_PCS, MV_PCS_RAM_CHECKSUM);
 
-	dev_set_drvdata(&phydev->mdio.dev, priv);
+	/* Set firmware load address */
+	phy_write_mmd(phydev, MDIO_MMD_PCS, MV_PCS_FW_LOW_WORD, 0);
+	phy_write_mmd(phydev, MDIO_MMD_PCS, MV_PCS_FW_HIGH_WORD, 0x0010);
+
+	ret = mv3310_write_firmware(phydev,
+			fw_entry->data + MV_FIRMWARE_HEADER_SIZE,
+			fw_entry->size - MV_FIRMWARE_HEADER_SIZE);
+	release_firmware(fw_entry);
+	if (ret < 0)
+		return ret;
+
+	phy_modify_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_BOOT,
+			MV_PMA_BOOT_FW_LOADED, MV_PMA_BOOT_FW_LOADED);
+
+	msleep(100);
 
 	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_FW_VER0);
 	if (ret < 0)
@@ -410,6 +480,56 @@ static int mv3310_probe(struct phy_device *phydev)
 	phydev_info(phydev, "Firmware version %u.%u.%u.%u\n",
 		    priv->firmware_ver >> 24, (priv->firmware_ver >> 16) & 255,
 		    (priv->firmware_ver >> 8) & 255, priv->firmware_ver & 255);
+
+	return 0;
+}
+
+static int mv3310_check_firmware(struct phy_device *phydev)
+{
+	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+	int ret;
+
+	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_BOOT);
+	if (ret < 0)
+		return ret;
+
+	if (ret & MV_PMA_BOOT_FATAL) {
+		dev_warn(&phydev->mdio.dev,
+			 "PHY failed to boot firmware, status=%04x\n", ret);
+		priv->firmware_failed = true;
+		return -ENODEV;
+	}
+
+	if ((ret & MV_PMA_BOOT_PROGRESS_MASK) == MV_PMA_BOOT_WAITING) {
+		ret = mv3310_load_firmware(phydev);
+		if (ret < 0)
+			return ret;
+	}
+
+	return 0;
+}
+
+static const struct sfp_upstream_ops mv3310_sfp_ops = {
+	.attach = phy_sfp_attach,
+	.detach = phy_sfp_detach,
+	.module_insert = mv3310_sfp_insert,
+};
+
+static int mv3310_probe(struct phy_device *phydev)
+{
+	struct mv3310_priv *priv;
+	u32 mmd_mask = MDIO_DEVS_PMAPMD | MDIO_DEVS_AN;
+	int ret;
+
+	if (!phydev->is_c45 ||
+	    (phydev->c45_ids.devices_in_package & mmd_mask) != mmd_mask)
+		return -ENODEV;
+
+	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	dev_set_drvdata(&phydev->mdio.dev, priv);
 
 	/* Powering down the port when not in use saves about 600mW */
 	ret = mv3310_power_down(phydev);
@@ -439,6 +559,24 @@ static int mv3310_resume(struct phy_device *phydev)
 	return mv3310_hwmon_config(phydev, true);
 }
 
+static int mv3310_start(struct phy_device *phydev)
+{
+	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+	int ret;
+
+	if (priv->firmware_failed) {
+		dev_warn(&phydev->mdio.dev,
+			 "PHY firmware failure: PHY not starting");
+		return -EINVAL;
+	}
+
+	ret = mv3310_check_firmware(phydev);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
 /* Some PHYs in the Alaska family such as the 88X3310 and the 88E2010
  * don't set bit 14 in PMA Extended Abilities (1.11), although they do
  * support 2.5GBASET and 5GBASET. For these models, we can still read their
@@ -456,9 +594,23 @@ static bool mv3310_has_pma_ngbaset_quirk(struct phy_device *phydev)
 		MV_PHY_ALASKA_NBT_QUIRK_MASK) == MV_PHY_ALASKA_NBT_QUIRK_REV;
 }
 
+static void mv3310_config_init_clear_power_down(struct phy_device *phydev) {
+	// TODO: move this to generic 10g code (the first two, at least).
+	// Copper PCS
+	phy_clear_bits_mmd(phydev, MDIO_MMD_PCS, MDIO_CTRL1, MDIO_CTRL1_LPOWER);
+	// Copper Control
+	phy_clear_bits_mmd(phydev, MDIO_MMD_PMAPMD, MDIO_CTRL1, MDIO_CTRL1_LPOWER);
+	// (HOST) 10GBASE-R PCS Control
+	phy_clear_bits_mmd(phydev, MDIO_MMD_PHYXS, 0x1000+MDIO_CTRL1, MDIO_CTRL1_LPOWER);
+	// (HOST) SGMII control
+	phy_clear_bits_mmd(phydev, MDIO_MMD_PHYXS, 0x2000+MDIO_CTRL1, MDIO_CTRL1_LPOWER);
+}
+
 static int mv3310_config_init(struct phy_device *phydev)
 {
+	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
 	int err;
+	int val;
 
 	/* Check that the PHY interface type is compatible */
 	if (phydev->interface != PHY_INTERFACE_MODE_SGMII &&
@@ -474,6 +626,14 @@ static int mv3310_config_init(struct phy_device *phydev)
 	err = mv3310_power_up(phydev);
 	if (err)
 		return err;
+
+	mv3310_config_init_clear_power_down(phydev);
+
+	val = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL);
+	if (val < 0)
+		return val;
+	priv->rate_match = ((val & MV_V2_PORT_MAC_TYPE_MASK) ==
+			MV_V2_PORT_MAC_TYPE_RATE_MATCH);
 
 	/* Enable EDPD mode - saving 600mW */
 	return mv3310_set_edpd(phydev, ETHTOOL_PHY_EDPD_DFLT_TX_MSECS);
@@ -581,6 +741,17 @@ static int mv3310_aneg_done(struct phy_device *phydev)
 
 static void mv3310_update_interface(struct phy_device *phydev)
 {
+	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+
+	/* In "XFI with Rate Matching" mode the PHY interface is fixed at
+	 * 10Gb. The PHY adapts the rate to actual wire speed with help of
+	 * internal 16KB buffer.
+	 */
+	if (priv->rate_match) {
+		phydev->interface = PHY_INTERFACE_MODE_10GBASER;
+		return;
+	}
+
 	if ((phydev->interface == PHY_INTERFACE_MODE_SGMII ||
 	     phydev->interface == PHY_INTERFACE_MODE_2500BASEX ||
 	     phydev->interface == PHY_INTERFACE_MODE_10GBASER) &&
@@ -757,6 +928,7 @@ static struct phy_driver mv3310_drivers[] = {
 		.probe		= mv3310_probe,
 		.suspend	= mv3310_suspend,
 		.resume		= mv3310_resume,
+		.start		= mv3310_start,
 		.config_aneg	= mv3310_config_aneg,
 		.aneg_done	= mv3310_aneg_done,
 		.read_status	= mv3310_read_status,
@@ -770,6 +942,7 @@ static struct phy_driver mv3310_drivers[] = {
 		.probe		= mv3310_probe,
 		.suspend	= mv3310_suspend,
 		.resume		= mv3310_resume,
+		.start		= mv3310_start,
 		.config_init	= mv3310_config_init,
 		.config_aneg	= mv3310_config_aneg,
 		.aneg_done	= mv3310_aneg_done,
@@ -786,6 +959,8 @@ static struct mdio_device_id __maybe_unused mv3310_tbl[] = {
 	{ MARVELL_PHY_ID_88E2110, MARVELL_PHY_ID_MASK },
 	{ },
 };
+MODULE_FIRMWARE("mrvl/x3310fw.hdr");
+MODULE_FIRMWARE("mrvl/e21x0fw.hdr");
 MODULE_DEVICE_TABLE(mdio, mv3310_tbl);
 MODULE_DESCRIPTION("Marvell Alaska X 10Gigabit Ethernet PHY driver (MV88X3310)");
 MODULE_LICENSE("GPL");

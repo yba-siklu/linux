@@ -343,17 +343,6 @@ out:
 	return ret;
 }
 
-int ethtool_check_ops(const struct ethtool_ops *ops)
-{
-	if (WARN_ON(ops->set_coalesce && !ops->supported_coalesce_params))
-		return -EINVAL;
-	/* NOTE: sufficiently insane drivers may swap ethtool_ops at runtime,
-	 * the fact that ops are checked at registration time does not
-	 * mean the ops attached to a netdev later on are sane.
-	 */
-	return 0;
-}
-
 int __ethtool_get_ts_info(struct net_device *dev, struct ethtool_ts_info *info)
 {
 	const struct ethtool_ops *ops = dev->ethtool_ops;
