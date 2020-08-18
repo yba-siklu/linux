@@ -149,6 +149,8 @@
 };
 
 &cp0_pinctrl {
+	pinctrl-0 = <&cp0_hw_version>;
+
 	cp0_xhci_vbus_pins: cp0-xhci-vbus-pins {
 		marvell,pins = "mpp55";
 		marvell,function = "gpio";
@@ -194,9 +196,16 @@
 		marvell,pins = "mpp57";
 		marvell,function = "gpio";
 	};
+
+	cp0_hw_version: cp0-hw-version-pins {
+		marvell,pins = "mpp58", "mpp59", "mpp32";
+		marvell,function = "gpio";
+	};
 };
 
 &cp1_pinctrl {
+	pinctrl-0 = <&cp1_hw_version>;
+
 	cp1_nand_pins: cp0-nand-pins {
 		marvell,pins = "mpp13";
 		marvell,function = "nf";
@@ -232,6 +241,11 @@
 	cp1_uart0_pins: cp1-uart0-pins {
 		marvell,pins = "mpp0", "mpp1";
 		marvell,function = "uart0";
+	};
+
+	cp1_hw_version: cp1-hw-version-pins {
+		marvell,pins = "mpp7";
+		marvell,function = "gpio";
 	};
 };
 
