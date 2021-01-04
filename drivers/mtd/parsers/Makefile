@@ -11,3 +11,4 @@ obj-$(CONFIG_MTD_SHARPSL_PARTS)		+= sharpslpart.o
 obj-$(CONFIG_MTD_REDBOOT_PARTS)		+= redboot.o
 obj-$(CONFIG_MTD_MYLOADER_PARTS)	+= myloader.o
 obj-$(CONFIG_MTD_ROUTERBOOT_PARTS)	+= routerbootpart.o
+obj-$(CONFIG_MTD_QCOMSMEM_PARTS)	+= qcomsmempart.o

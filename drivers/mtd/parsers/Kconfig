@@ -185,3 +185,11 @@ config MTD_ROUTERBOOT_PARTS
     flash, some of which are fixed and some of which are located at
     variable offsets. This parser handles both cases via properly
     formatted DTS.
+
+config MTD_QCOMSMEM_PARTS
+	tristate "Qualcomm SMEM NAND flash partition parser"
+	depends on MTD_NAND_QCOM || COMPILE_TEST
+	depends on QCOM_SMEM
+	help
+	  This provides support for parsing partitions from Shared Memory (SMEM)
+	  for NAND flash on Qualcomm platforms.
