@@ -653,7 +653,9 @@ static int qfprom_probe(struct platform_device *pdev)
 		return err;
 	}
 
-	device_register(&device_qfprom);
+	err = device_register(&device_qfprom);
+	if (err)
+		return err;
 
 	/*
 	 * Registering sec_auth under "/sys/sec_authenticate"
