@@ -133,6 +133,8 @@
 };
 
 &pcie0 {
+	perst-gpio = <&tlmm 60 1>;
+
 	status = "ok";
 };
 
