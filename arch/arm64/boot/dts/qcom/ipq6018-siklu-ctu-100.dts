@@ -57,11 +57,13 @@
 	};
 };
 
+#if 0
 &qseecom {
 		mem-start = <0x49B00000>;
 		mem-size = <0x600000>;
 		status = "ok";
 };
+#endif
 
 &blsp1_uart3 {
 	pinctrl-0 = <&serial_3_pins>;
@@ -204,6 +206,7 @@
 	status = "ok";
 };
 
+#if 0
 &qusb_phy_0 {
 	status = "ok";
 };
@@ -215,3 +218,4 @@
 &usb3 {
 	status = "ok";
 };
+#endif
