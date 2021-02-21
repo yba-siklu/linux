@@ -697,7 +697,7 @@
 
 		edma@3ab00000 {
 			compatible = "qcom,edma";
-			reg = <0x3ab00000 0xabe00>;
+			reg = <0x0 0x3ab00000 0x0 0xabe00>;
 			reg-names = "edma-reg-base";
 			qcom,txdesc-ring-start = <23>;
 			qcom,txdesc-rings = <1>;
@@ -715,17 +715,18 @@
 			reset-names = "edma_rst";
 		};
 
-		mdio@90000 {
+		mdio: mdio@90000 {
 			#address-cells = <1>;
-			#size-cells = <1>;
-			compatible = "qcom,qca-mdio", "qcom,ipq40xx-mdio";
-			reg = <0x90000 0x64>;
+			#size-cells = <0>;
+			compatible = "qcom,ipq6018-mdio", "qcom,ipq4019-mdio";
+			reg = <0x0 0x90000 0x0 0x64>;
+			clocks = <&gcc GCC_MDIO_AHB_CLK>;
 			status = "disabled";
 		};
 
 		ess-switch@3a000000 {
 			compatible = "qcom,ess-switch-ipq60xx";
-			reg = <0x3a000000 0x1000000>;
+			reg = <0x0 0x3a000000 0x0 0x1000000>;
 			switch_access_mode = "local bus";
 			clocks = <&gcc GCC_CMN_12GPLL_AHB_CLK>,
 				 <&gcc GCC_CMN_12GPLL_SYS_CLK>,
@@ -1123,7 +1124,7 @@
 
 		ess-uniphy@7a00000 {
 			compatible = "qcom,ess-uniphy";
-			reg = <0x7a00000 0x30000>;
+			reg = <0x0 0x7a00000 0x0 0x30000>;
 			uniphy_access_mode = "local bus";
 		};
 	};
