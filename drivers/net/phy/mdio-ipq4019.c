@@ -10,6 +10,7 @@
 #include <linux/of_address.h>
 #include <linux/of_mdio.h>
 #include <linux/phy.h>
+#include <linux/clk.h>
 #include <linux/platform_device.h>
 
 #define MDIO_ADDR_REG				0x44
@@ -23,9 +24,11 @@
 
 #define ipq4019_MDIO_TIMEOUT	10000
 #define ipq4019_MDIO_SLEEP		10
+#define IPQ4019_MDIO_CLK_RATE	100000000
 
 struct ipq4019_mdio_data {
 	void __iomem	*membase;
+	struct clk	*clk;
 };
 
 static int ipq4019_mdio_wait_busy(struct mii_bus *bus)
@@ -107,6 +110,15 @@ static int ipq4019_mdio_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	priv = bus->priv;
+
+	priv->clk = devm_clk_get(&pdev->dev, NULL);
+	if (!IS_ERR(priv->clk)) {
+		ret = clk_set_rate(priv->clk, IPQ4019_MDIO_CLK_RATE);
+		if (ret == 0)
+			ret = clk_prepare_enable(priv->clk);
+		if (ret)
+			return ret;
+	}
 
 	priv->membase = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(priv->membase))
