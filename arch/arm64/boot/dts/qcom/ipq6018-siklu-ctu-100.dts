@@ -85,6 +85,10 @@
 		reg = <0>;
 		compatible = "n25q128a11";
 		spi-max-frequency = <50000000>;
+
+		partitions {
+			compatible = "qcom,smem-part";
+		};
 	};
 };
 
