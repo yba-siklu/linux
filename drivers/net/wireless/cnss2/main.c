@@ -46,11 +46,12 @@
 #ifdef CONFIG_CNSS_EMULATION
 #define CNSS_MHI_TIMEOUT_DEFAULT	3600
 #else
-#define CNSS_MHI_TIMEOUT_DEFAULT	10
+#define CNSS_MHI_TIMEOUT_DEFAULT	60
 #endif
 #define CNSS_QMI_TIMEOUT_DEFAULT	10000
 #define CNSS_BDF_TYPE_DEFAULT		CNSS_BDF_ELF
 #define CNSS_TIME_SYNC_PERIOD_DEFAULT	900000
+#define DEFAULT_FW_FILE_NAME		"qcn9000/amss.bin"
 
 #define MAX_NUMBER_OF_SOCS 4
 struct cnss_plat_data *plat_env[MAX_NUMBER_OF_SOCS];
@@ -100,6 +101,12 @@ MODULE_PARM_DESC(fw_ready_timeout, "fw ready timeout in seconds");
 static int cold_boot_cal_timeout = 60;
 module_param(cold_boot_cal_timeout, int, 0644);
 MODULE_PARM_DESC(cold_boot_cal_timeout, "Cold boot cal timeout in seconds");
+
+#define DAEMON_READY_DELAY 100  /* in msecs */
+#define DAEMON_READY_DELAY_PRINT 2  /* in secs */
+static int daemon_ready_timeout = 10;
+module_param(daemon_ready_timeout, int, 0644);
+MODULE_PARM_DESC(daemon_ready_timeout, "cnss-daemon ready timeout in seconds");
 
 static int soc_version_major;
 module_param(soc_version_major, int, 0444);
@@ -571,7 +578,7 @@ static int cnss_fw_mem_ready_hdlr(struct cnss_plat_data *plat_priv)
 	if (ret)
 		goto out;
 
-	if (plat_priv->device_id == QCN9100_DEVICE_ID) {
+	if (plat_priv->device_id == QCN6122_DEVICE_ID) {
 		ret = cnss_wlfw_device_info_send_sync(plat_priv);
 		if (ret) {
 			cnss_pr_err("Device info msg failed. ret %d\n", ret);
@@ -671,7 +678,7 @@ void cnss_get_ramdump_device_name(struct device *dev,
 			 plat_priv->device_name);
 		break;
 	case QCA5018_DEVICE_ID:
-	case QCN9100_DEVICE_ID:
+	case QCN6122_DEVICE_ID:
 		multi_pd_arch = of_property_read_bool(dev->of_node,
 						      "qcom,multipd_arch");
 		if (multi_pd_arch) {
@@ -706,7 +713,7 @@ void cnss_wait_for_fw_ready(struct device *dev)
 	    plat_priv->device_id == QCA8074V2_DEVICE_ID ||
 	    plat_priv->device_id == QCA6018_DEVICE_ID ||
 	    plat_priv->device_id == QCA5018_DEVICE_ID ||
-	    plat_priv->device_id == QCN9100_DEVICE_ID ||
+	    plat_priv->device_id == QCN6122_DEVICE_ID ||
 	    plat_priv->device_id == QCN9000_DEVICE_ID) {
 		cnss_pr_info("Waiting for FW ready. Device: 0x%lx, FW ready timeout: %d seconds\n",
 			     plat_priv->device_id, fw_ready_timeout);
@@ -735,7 +742,7 @@ void cnss_wait_for_cold_boot_cal_done(struct device *dev)
 	if (plat_priv->device_id == QCA8074_DEVICE_ID ||
 	    plat_priv->device_id == QCA8074V2_DEVICE_ID ||
 	    plat_priv->device_id == QCA6018_DEVICE_ID ||
-	    plat_priv->device_id == QCN9100_DEVICE_ID ||
+	    plat_priv->device_id == QCN6122_DEVICE_ID ||
 	    plat_priv->device_id == QCA5018_DEVICE_ID ||
 	    plat_priv->device_id == QCN9000_DEVICE_ID) {
 		/* Cold boot Calibration is done parallely for multiple devices
@@ -1361,6 +1368,7 @@ static int cnss_qca8074_notifier_nb(struct notifier_block *nb,
 		driver_ops->update_status((struct pci_dev *)plat_priv->plat_dev,
 					  (const struct pci_device_id *)
 					  plat_priv->plat_dev_id, code);
+		cnss_free_soc_info(plat_priv);
 	}
 
 	return NOTIFY_OK;
@@ -1387,12 +1395,77 @@ void *cnss_register_qca8074_cb(struct cnss_plat_data *plat_priv)
 	return ss_handle;
 }
 
+void *cnss_register_notifier_cb(struct cnss_plat_data *plat_priv)
+{
+	switch (plat_priv->device_id) {
+	case QCN9000_DEVICE_ID:
+		return cnss_register_qcn9000_cb(plat_priv);
+	case QCA8074_DEVICE_ID:
+	case QCA8074V2_DEVICE_ID:
+	case QCA6018_DEVICE_ID:
+	case QCA5018_DEVICE_ID:
+	case QCN6122_DEVICE_ID:
+		return cnss_register_qca8074_cb(plat_priv);
+	default:
+		cnss_pr_err("Invalid device ID: 0x%lx", plat_priv->device_id);
+	}
+	return NULL;
+}
+
+int cnss_unregister_notifier_cb(struct cnss_plat_data *plat_priv)
+{
+	switch (plat_priv->device_id) {
+	case QCN9000_DEVICE_ID:
+		return cnss_unregister_qcn9000_cb(plat_priv);
+	case QCA8074_DEVICE_ID:
+	case QCA8074V2_DEVICE_ID:
+	case QCA6018_DEVICE_ID:
+	case QCA5018_DEVICE_ID:
+	case QCN6122_DEVICE_ID:
+		return cnss_unregister_qca8074_cb(plat_priv);
+	default:
+		cnss_pr_err("Invalid device ID: 0x%lx", plat_priv->device_id);
+	}
+	return 0;
+}
+
+int cnss_wait_for_daemon_ready(struct cnss_plat_data *plat_priv)
+{
+	int count = 0;
+
+	if (!plat_priv)
+		return -ENODEV;
+
+	if (!plat_priv->daemon_support) {
+		cnss_pr_info("No daemon_support for %s\n",
+			     plat_priv->device_name);
+		return 0;
+	}
+
+	while (!plat_priv->daemon_ready) {
+		msleep(DAEMON_READY_DELAY);
+		if (count++ > daemon_ready_timeout * 10) {
+			cnss_pr_err("Timed out waiting for cnss-daemon %d seconds\n",
+				    daemon_ready_timeout);
+			CNSS_ASSERT(0);
+			return -ETIMEDOUT;
+		}
+
+		/* Print an info log that we are waiting for every 2 seconds */
+		if (!(count % (DAEMON_READY_DELAY_PRINT * 10)))
+			cnss_pr_info("Waiting for cnss-daemon for %s\n",
+				     plat_priv->device_name);
+	}
+
+	cnss_pr_info("cnss-daemon is ready for %s\n",
+		     plat_priv->device_name);
+	return 0;
+}
+
 int cnss_wlan_register_driver(struct cnss_wlan_driver *driver_ops)
 {
 	int ret, i;
 	struct cnss_plat_data *plat_priv;
-	struct cnss_subsys_info *subsys_info;
-	struct cnss_esoc_info *esoc_info;
 
 	for (i = 0; i < plat_env_index; i++) {
 		plat_priv = plat_env[i];
@@ -1408,40 +1481,23 @@ int cnss_wlan_register_driver(struct cnss_wlan_driver *driver_ops)
 			continue;
 		}
 
+		plat_priv->target_asserted = 0;
+		plat_priv->target_assert_timestamp = 0;
+		plat_priv->driver_status = CNSS_LOAD_UNLOAD;
+
+		if (cnss_wait_for_daemon_ready(plat_priv))
+			continue;
+
 		if ((plat_priv->device_id == QCA8074_DEVICE_ID ||
 		     plat_priv->device_id == QCA8074V2_DEVICE_ID ||
 		     plat_priv->device_id == QCA5018_DEVICE_ID ||
-		     plat_priv->device_id == QCN9100_DEVICE_ID ||
+		     plat_priv->device_id == QCN6122_DEVICE_ID ||
 		     plat_priv->device_id == QCA6018_DEVICE_ID) &&
 		    (strcmp(driver_ops->name, "pld_ahb") == 0)) {
-			plat_priv->target_asserted = 0;
-			plat_priv->target_assert_timestamp = 0;
-			plat_priv->driver_status = CNSS_LOAD_UNLOAD;
 			plat_priv->driver_ops = driver_ops;
-			cnss_register_subsys(plat_priv);
-			esoc_info = &plat_priv->esoc_info;
-			esoc_info->modem_notify_handler =
-					cnss_register_qca8074_cb(plat_priv);
-
-			subsys_info = &plat_priv->subsys_info;
-			if (of_property_read_u32(plat_priv->plat_dev->dev.of_node,
-					"qcom,rproc", &subsys_info->rproc_handle)) {
-				ret = -EINVAL;
+			ret = cnss_register_subsys(plat_priv);
+			if (ret)
 				goto reset_ctx;
-			}
-			subsys_info->subsys_handle =
-				rproc_get_by_phandle(subsys_info->rproc_handle);
-			if (!subsys_info->subsys_handle) {
-				ret = -EINVAL;
-				goto reset_ctx;
-			} else if (IS_ERR(subsys_info->subsys_handle)) {
-				ret = PTR_ERR(subsys_info->subsys_handle);
-				goto reset_ctx;
-			}
-			if (rproc_boot(subsys_info->subsys_handle)) {
-				ret = -EINVAL;
-				goto reset_ctx;
-			}
 		}
 		/*
 		 * Skip cnss_wlan_driver_register for PCI if pci device is not
@@ -1452,16 +1508,17 @@ int cnss_wlan_register_driver(struct cnss_wlan_driver *driver_ops)
 		    plat_priv->pci_dev &&
 		    (strcmp(driver_ops->name, "pld_pcie") == 0)) {
 			cnss_pci_init(plat_priv);
-			plat_priv->driver_status = CNSS_LOAD_UNLOAD;
 			plat_priv->driver_ops = driver_ops;
 			set_bit(CNSS_DRIVER_LOADING, &plat_priv->driver_state);
-			esoc_info = &plat_priv->esoc_info;
-			cnss_register_subsys(plat_priv);
+			ret = cnss_register_subsys(plat_priv);
+			if (ret)
+				goto reset_ctx;
 		}
 		plat_priv->driver_status = CNSS_INITIALIZED;
 	}
 
 	return 0;
+
 reset_ctx:
 	cnss_pr_err("Failed to get subsystem, err = %d\n", ret);
 	plat_priv->driver_status = CNSS_UNINITIALIZED;
@@ -1544,7 +1601,7 @@ void cnss_wlan_unregister_driver(struct cnss_wlan_driver *driver_ops)
 		if ((plat_priv->device_id == QCA8074_DEVICE_ID ||
 		     plat_priv->device_id == QCA8074V2_DEVICE_ID ||
 		     plat_priv->device_id == QCA5018_DEVICE_ID ||
-		     plat_priv->device_id == QCN9100_DEVICE_ID ||
+		     plat_priv->device_id == QCN6122_DEVICE_ID ||
 		     plat_priv->device_id == QCA6018_DEVICE_ID) && ops &&
 			(strcmp(driver_ops->name, "pld_ahb") == 0)) {
 			subsys_info = &plat_priv->subsys_info;
@@ -1558,8 +1615,8 @@ void cnss_wlan_unregister_driver(struct cnss_wlan_driver *driver_ops)
 					    plat_priv->plat_dev);
 			}
 
+			cnss_unregister_notifier_cb(plat_priv);
 			subsys_info->subsys_handle = NULL;
-			cnss_unregister_qca8074_cb(plat_priv);
 			plat_priv->driver_ops = NULL;
 			plat_priv->driver_status = CNSS_UNINITIALIZED;
 			plat_priv->driver_state = 0;
@@ -1580,7 +1637,7 @@ void cnss_wlan_unregister_driver(struct cnss_wlan_driver *driver_ops)
 					ops->remove((struct pci_dev *)plat_priv->plat_dev);
 			}
 			cnss_unregister_subsys(plat_priv);
-			cnss_unregister_qcn9000_cb(plat_priv);
+			cnss_unregister_notifier_cb(plat_priv);
 			plat_priv->driver_ops = NULL;
 			plat_priv->driver_status = CNSS_UNINITIALIZED;
 			plat_priv->driver_state = 0;
@@ -1611,20 +1668,24 @@ void  *cnss_subsystem_get(struct device *dev, int device_id)
 	subsys_info = &plat_priv->subsys_info;
 
 	if (subsys_info->subsys_handle) {
-		pr_err("%s: error: subsys handle %p is not NULL ",
-		       __func__, subsys_info->subsys_handle);
+		cnss_pr_err("%s: error: subsys handle %p is not NULL ",
+			    __func__, subsys_info->subsys_handle);
 		return NULL;
 	}
-	subsys_info->subsys_handle = rproc_get_by_name(subsys_info->subsys_desc.name);
-	if (!subsys_info->subsys_handle) {
-		pr_err("%s:%d error: subsys handle is NULL\n",__func__,__LINE__);
-		return NULL;
-	} else if (IS_ERR(subsys_info->subsys_handle)) {
-		pr_err("%s:%d error: subsys handle ERR\n",__func__,__LINE__);
+
+	if (!plat_priv->rproc_handle) {
+		cnss_pr_err("%s: rproc_handle is NULL for %s\n",
+			    __func__, plat_priv->device_name);
 		return NULL;
 	}
+
+	if (cnss_wait_for_daemon_ready(plat_priv))
+		return NULL;
+
+	subsys_info->subsys_handle = plat_priv->rproc_handle;
 	if (rproc_boot(subsys_info->subsys_handle)) {
-		pr_err("%s:%d error: rproc_boot failed\n",__func__,__LINE__);
+		cnss_pr_err("%s: error: rproc_boot failed for %s\n",
+			    __func__, plat_priv->device_name);
 		return NULL;
 	}
 	return subsys_info->subsys_handle;
@@ -1654,9 +1715,8 @@ void cnss_subsystem_put(struct device *dev)
 		rproc_shutdown(subsys_info->subsys_handle);
 		subsys_info->subsystem_put_in_progress = false;
 		subsys_info->subsys_handle = NULL;
+		plat_priv->driver_state = 0;
 	}
-
-	plat_priv->driver_state = 0;
 }
 EXPORT_SYMBOL(cnss_subsystem_put);
 
@@ -2268,10 +2328,10 @@ static int cnss_qdss_trace_save_hdlr(struct cnss_plat_data *plat_priv,
 		strlcpy(file_prefix, event_data->file_name,
 			(file_suffix - &event_data->file_name[0]) + 1);
 
-		if (plat_priv->device_id == QCN9100_DEVICE_ID)
+		if (plat_priv->device_id == QCN6122_DEVICE_ID)
 			snprintf(file_name, sizeof(file_name),
-				 "%s_qcn9100_%d%s", file_prefix,
-				 (plat_priv->userpd_id - QCN9100_0),
+				 "%s_qcn6122_%d%s", file_prefix,
+				 (plat_priv->userpd_id - QCN6122_0),
 				 file_suffix);
 
 		if (plat_priv->device_id == QCN9000_DEVICE_ID)
@@ -2280,11 +2340,11 @@ static int cnss_qdss_trace_save_hdlr(struct cnss_plat_data *plat_priv,
 				 (plat_priv->wlfw_service_instance_id -
 				 NODE_ID_BASE), file_suffix);
 	} else {
-		if (plat_priv->device_id == QCN9100_DEVICE_ID)
+		if (plat_priv->device_id == QCN6122_DEVICE_ID)
 			snprintf(file_name, sizeof(file_name),
-				 "%s_qcn9100_%d",
+				 "%s_qcn6122_%d",
 				 event_data->file_name,
-				 (plat_priv->userpd_id - QCN9100_0));
+				 (plat_priv->userpd_id - QCN6122_0));
 
 		if (plat_priv->device_id == QCN9000_DEVICE_ID)
 			snprintf(file_name, sizeof(file_name),
@@ -2822,76 +2882,81 @@ const struct rproc_ops cnss_rproc_ops = {
 
 int cnss_register_subsys(struct cnss_plat_data *plat_priv)
 {
-	int  index;
-	bool multi_pd_arch = false;
-	struct cnss_subsys_info *subsys_info;
+	struct cnss_subsys_info *subsys_info = &plat_priv->subsys_info;
 	struct device *dev = &plat_priv->plat_dev->dev;
+	phandle rproc_node;
+	int ret = 0;
 
-	subsys_info = &plat_priv->subsys_info;
+	switch (plat_priv->bus_type) {
+	case CNSS_BUS_AHB:
+		if (!plat_priv->rproc_handle) {
+			/* rproc_handle for AHB targets are allocated inside
+			 * remoteproc driver and is never freed.
+			 * So get the rproc_handle once during first wifi load
+			 * and reuse it for every subsequent loads
+			 */
+			if (of_property_read_u32(dev->of_node, "qcom,rproc",
+						 &rproc_node)) {
+				return -ENODEV;
+			}
 
-	switch (plat_priv->device_id) {
-	case QCA6174_DEVICE_ID:
-		subsys_info->subsys_desc.name = "AR6320";
-		break;
-	case QCN9000_EMULATION_DEVICE_ID:
-	case QCN9000_DEVICE_ID:
-		index = plat_priv->wlfw_service_instance_id - NODE_ID_BASE;
-		subsys_info->subsys_desc.name = plat_priv->device_name;
-		break;
-	case QCA8074_DEVICE_ID:
-	case QCA8074V2_DEVICE_ID:
-	case QCA6018_DEVICE_ID:
-		subsys_info->subsys_desc.name = "cd00000.q6v5_wcss";
-		return 0;
-	case QCA5018_DEVICE_ID:
-	case QCN9100_DEVICE_ID:
-		multi_pd_arch = of_property_read_bool(dev->of_node,
-						      "qcom,multipd_arch");
-		if (multi_pd_arch)
+			plat_priv->rproc_handle =
+				rproc_get_by_phandle(rproc_node);
+			if (IS_ERR_OR_NULL(plat_priv->rproc_handle)) {
+				cnss_pr_err("%s: Failed to get rproc handle %ld for device %s\n",
+					    __func__,
+					    PTR_ERR(plat_priv->rproc_handle),
+					    plat_priv->device_name);
+				return -EINVAL;
+			}
+		}
+
+		/* Assign the subsys name */
+		if (of_property_read_bool(dev->of_node, "qcom,multipd_arch"))
 			of_property_read_string(dev->of_node,
 						"qcom,userpd-subsys-name",
 						&subsys_info->subsys_desc.name);
 		else
-			subsys_info->subsys_desc.name = "cd00000.q6v5_wcss";
-		return 0;
+			subsys_info->subsys_desc.name =
+				plat_priv->rproc_handle->name;
+
+		break;
+	case CNSS_BUS_PCI:
+		if (!plat_priv->pci_dev)
+			return -ENODEV;
+
+		if (!plat_priv->rproc_handle) {
+			/* Should never happen as rproc_handle is allocated
+			 * during cnss_probe for PCI targets
+			 */
+			cnss_pr_err("Invalid rproc_handle for %s",
+				    plat_priv->device_name);
+			return -ENODEV;
+		}
+		subsys_info->subsys_desc.name = plat_priv->device_name;
+		break;
 	default:
-		cnss_pr_err("Unknown device ID: 0x%lx\n", plat_priv->device_id);
+		cnss_pr_err("%s: Invalid bus type for device 0x%lx\n",
+			    __func__, plat_priv->device_id);
 		return -ENODEV;
+
 	}
 
-	if (!plat_priv->pci_dev)
-		return 0;
-	subsys_info->subsys_handle = rproc_alloc(&plat_priv->plat_dev->dev,
-				subsys_info->subsys_desc.name,
-				&cnss_rproc_ops, "qcn9000/amss.bin", 0);
+	/* plat_priv->rproc_handle is never freed but subsys_handle is set here
+	 * and is reset to NULL everytime target is shutdown.
+	 */
+	subsys_info->subsys_handle = plat_priv->rproc_handle;
+	plat_priv->esoc_info.modem_notify_handler =
+				cnss_register_notifier_cb(plat_priv);
 
-	if (!subsys_info->subsys_handle) {
-		cnss_pr_err("%s:%d subsys_handle NULL\n", __func__,__LINE__);
-		return -EINVAL;
-        } else if (IS_ERR(subsys_info->subsys_handle)) {
-		cnss_pr_err("%s:%d subsys_handle ERR\n", __func__,__LINE__);
-		return PTR_ERR(subsys_info->subsys_handle);
-        }
-
-	subsys_info->subsys_handle->auto_boot = false;
-	if (rproc_add(subsys_info->subsys_handle)) {
-		cnss_pr_err("%s:%d failed\n", __func__,__LINE__);
-		return -EINVAL;
-        }
-
-	if (plat_priv->device_id == QCN9000_DEVICE_ID && plat_priv->pci_dev &&
-		(strcmp(plat_priv->driver_ops->name, "pld_pcie") == 0)) {
-			plat_priv->esoc_info.modem_notify_handler =
-					cnss_register_qcn9000_cb(plat_priv);
+	ret = rproc_boot(subsys_info->subsys_handle);
+	if (ret) {
+		cnss_pr_err("%s: Failed to boot device %s (%d)\n",
+			    __func__, plat_priv->device_name, ret);
+		cnss_unregister_notifier_cb(plat_priv);
 	}
 
-	if (rproc_boot(subsys_info->subsys_handle)) {
-		cnss_pr_err("%s:%d failed\n", __func__,__LINE__);
-		return -EINVAL;
-	}
-
-	return 0;
-
+	return ret;
 }
 
 void cnss_unregister_subsys(struct cnss_plat_data *plat_priv)
@@ -2904,7 +2969,7 @@ void cnss_unregister_subsys(struct cnss_plat_data *plat_priv)
 	if (plat_priv->device_id == QCA8074_DEVICE_ID ||
 	    plat_priv->device_id == QCA8074V2_DEVICE_ID ||
 	    plat_priv->device_id == QCA5018_DEVICE_ID ||
-	    plat_priv->device_id == QCN9100_DEVICE_ID ||
+	    plat_priv->device_id == QCN6122_DEVICE_ID ||
 	    plat_priv->device_id == QCA6018_DEVICE_ID) {
 		return;
 	}
@@ -3325,7 +3390,7 @@ static const struct platform_device_id cnss_platform_id_table[] = {
 	{ .name = "qca8074v2", .driver_data = QCA8074V2_DEVICE_ID, },
 	{ .name = "qca6018", .driver_data = QCA6018_DEVICE_ID, },
 	{ .name = "qca5018", .driver_data = QCA5018_DEVICE_ID, },
-	{ .name = "qcn9100", .driver_data = QCN9100_DEVICE_ID, },
+	{ .name = "qcn6122", .driver_data = QCN6122_DEVICE_ID, },
 };
 
 static const struct of_device_id cnss_of_match_table[] = {
@@ -3348,7 +3413,7 @@ static const struct of_device_id cnss_of_match_table[] = {
 		.compatible = "qcom,cnss-qca5018",
 		.data = (void *)&cnss_platform_id_table[5]},
 	{
-		.compatible = "qcom,cnss-qcn9100",
+		.compatible = "qcom,cnss-qcn6122",
 		.data = (void *)&cnss_platform_id_table[6]},
 	{ },
 };
@@ -3379,10 +3444,10 @@ static void cnss_set_caldata_support(struct cnss_plat_data *plat_priv)
 			return;
 		}
 		break;
-	case QCN9100_DEVICE_ID:
-		if (((plat_priv->userpd_id == QCN9100_0) &&
+	case QCN6122_DEVICE_ID:
+		if (((plat_priv->userpd_id == QCN6122_0) &&
 		     (disable_caldata_bmap & SKIP_PCI_0)) ||
-		    ((plat_priv->userpd_id == QCN9100_1) &&
+		    ((plat_priv->userpd_id == QCN6122_1) &&
 		     (disable_caldata_bmap & SKIP_PCI_1))) {
 			plat_priv->caldata_support = 0;
 			cnss_pr_info("Disabling caldata support for %s",
@@ -3422,11 +3487,11 @@ static int cnss_set_device_name(struct cnss_plat_data *plat_priv)
 		snprintf(plat_priv->device_name, sizeof(plat_priv->device_name),
 			 "QCA5018");
 		break;
-	case QCN9100_DEVICE_ID:
+	case QCN6122_DEVICE_ID:
 		index = plat_priv->wlfw_service_instance_id -
-						WLFW_SERVICE_INS_ID_V01_QCN9100;
+						WLFW_SERVICE_INS_ID_V01_QCN6122;
 		snprintf(plat_priv->device_name, sizeof(plat_priv->device_name),
-			 "QCN9100_%d", index);
+			 "QCN6122_%d", index);
 		break;
 	default:
 		cnss_pr_err("No such device id 0x%lx\n", plat_priv->device_id);
@@ -3458,9 +3523,9 @@ void cnss_update_platform_feature_support(u8 type, u32 instance_id, u32 value)
 		cnss_pr_info("Setting cold_boot_support=%d for instance_id 0x%x\n",
 			     value, instance_id);
 		break;
-	case CNSS_GENL_MSG_TYPE_CALDATA_SUPPORT:
-		plat_priv->caldata_support = value;
-		cnss_pr_info("Setting caldata_support=%d for instance_id 0x%x\n",
+	case CNSS_GENL_MSG_TYPE_DAEMON_READY:
+		plat_priv->daemon_ready = value;
+		cnss_pr_info("Setting daemon_ready=%d for instance_id 0x%x\n",
 			     value, instance_id);
 		break;
 	default:
@@ -3469,7 +3534,7 @@ void cnss_update_platform_feature_support(u8 type, u32 instance_id, u32 value)
 	}
 }
 
-static int platform_get_qcn9100_userpd_id(struct platform_device *plat_dev,
+static int platform_get_qcn6122_userpd_id(struct platform_device *plat_dev,
 					  uint32_t *userpd_id)
 {
 	int ret = 0;
@@ -3484,10 +3549,10 @@ static int platform_get_qcn9100_userpd_id(struct platform_device *plat_dev,
 	}
 
 	if (strcmp(subsys_name, "q6v5_wcss_userpd2") == 0) {
-		*userpd_id = QCN9100_0;
+		*userpd_id = QCN6122_0;
 		return 0;
 	} else if (strcmp(subsys_name, "q6v5_wcss_userpd3") == 0) {
-		*userpd_id = QCN9100_1;
+		*userpd_id = QCN6122_1;
 		return 0;
 	}
 
@@ -3513,7 +3578,7 @@ cnss_check_skip_target_probe(const struct platform_device_id *device_id,
 		   (device_id->driver_data == QCA8074_DEVICE_ID ||
 		   device_id->driver_data == QCA8074V2_DEVICE_ID ||
 		   device_id->driver_data == QCA6018_DEVICE_ID ||
-		   device_id->driver_data == QCN9100_DEVICE_ID ||
+		   device_id->driver_data == QCN6122_DEVICE_ID ||
 		   device_id->driver_data == QCA5018_DEVICE_ID)) {
 		pr_err("Skipping cnss_probe for device 0x%lx\n",
 		       device_id->driver_data);
@@ -3522,8 +3587,8 @@ cnss_check_skip_target_probe(const struct platform_device_id *device_id,
 
 	/* skip_radio_bmap based skip target checks
 	 * SKIP_INTEGRATED - skip integrated radios ie. 5018,8074,8074v2,6018
-	 * SKIP_PCI_0 - skip PCI_0 radios ie. first qcn9000/qcn9100 radios
-	 * SKIP_PCI_1 - skip PCI_1 radios ie. second qcn9000/qcn9100 radios
+	 * SKIP_PCI_0 - skip PCI_0 radios ie. first qcn9000/qcn6122 radios
+	 * SKIP_PCI_1 - skip PCI_1 radios ie. second qcn9000/qcn6122 radios
 	 */
 	if ((skip_radio_bmap & SKIP_INTEGRATED) &&
 	    ((device_id->driver_data == QCA5018_DEVICE_ID) ||
@@ -3534,16 +3599,16 @@ cnss_check_skip_target_probe(const struct platform_device_id *device_id,
 		       device_id->driver_data);
 		return true;
 	} else if ((skip_radio_bmap & SKIP_PCI_0) &&
-		   (((userpd_id == QCN9100_0) &&
-		   (device_id->driver_data == QCN9100_DEVICE_ID)) ||
+		   (((userpd_id == QCN6122_0) &&
+		   (device_id->driver_data == QCN6122_DEVICE_ID)) ||
 		   ((node_id == QCN9000_0) &&
 		   (device_id->driver_data == QCN9000_DEVICE_ID)))) {
 		pr_err("Skipping cnss_probe for PCI_0 device 0x%lx\n",
 		       device_id->driver_data);
 		return true;
 	} else if ((skip_radio_bmap & SKIP_PCI_1) &&
-		   (((userpd_id == QCN9100_1) &&
-		   (device_id->driver_data == QCN9100_DEVICE_ID)) ||
+		   (((userpd_id == QCN6122_1) &&
+		   (device_id->driver_data == QCN6122_DEVICE_ID)) ||
 		   ((node_id == QCN9000_1) &&
 		   (device_id->driver_data == QCN9000_DEVICE_ID)))) {
 		pr_err("Skipping cnss_probe for PCI_1 device 0x%lx\n",
@@ -3552,6 +3617,65 @@ cnss_check_skip_target_probe(const struct platform_device_id *device_id,
 	}
 
 	return false;
+}
+
+static int cnss_rproc_register(struct cnss_plat_data *plat_priv)
+{
+	struct device *dev = &plat_priv->plat_dev->dev;
+
+	switch (plat_priv->bus_type) {
+	case CNSS_BUS_AHB:
+		/* rproc alloc is done from qcom_q6v5_wcss code for AHB
+		 * plat_priv->rproc_handle will be filled during the first
+		 * wifi load from cnss_register_subsys
+		 */
+		return 0;
+	case CNSS_BUS_PCI:
+		plat_priv->rproc_handle = rproc_alloc(dev,
+						      plat_priv->device_name,
+						      &cnss_rproc_ops,
+						      plat_priv->firmware_name,
+						      0);
+
+		if (IS_ERR_OR_NULL(plat_priv->rproc_handle)) {
+			cnss_pr_err("%s: Failed to register rproc %ld for device 0x%s\n",
+				    __func__,
+				    PTR_ERR(plat_priv->rproc_handle),
+				    plat_priv->device_name);
+			return -ENODEV;
+		}
+
+		plat_priv->rproc_handle->auto_boot = false;
+		if (rproc_add(plat_priv->rproc_handle)) {
+			cnss_pr_err("%s: Failed to add rproc for device %s\n",
+				    __func__, plat_priv->device_name);
+			rproc_free(plat_priv->rproc_handle);
+			return -EINVAL;
+		}
+		break;
+	default:
+		cnss_pr_err("Invalid bus type for device %s\n",
+			    plat_priv->device_name);
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static void cnss_rproc_unregister(struct cnss_plat_data *plat_priv)
+{
+	if (plat_priv->rproc_handle) {
+		/* For AHB targets, ref count for rproc is taken during first
+		 * wifi load from cnss_register_subsys, put the ref count here.
+		 * For PCI targets, rproc_handle is allocated during cnss_prove,
+		 * delete and free the proc_handle here.
+		 */
+		if (plat_priv->bus_type == CNSS_BUS_AHB) {
+			rproc_put(plat_priv->rproc_handle);
+		} else if (plat_priv->bus_type == CNSS_BUS_PCI) {
+			rproc_del(plat_priv->rproc_handle);
+			rproc_free(plat_priv->rproc_handle);
+		}
+	}
 }
 
 static int cnss_probe(struct platform_device *plat_dev)
@@ -3577,8 +3701,8 @@ static int cnss_probe(struct platform_device *plat_dev)
 
 	device_id = (const struct platform_device_id *)of_id->data;
 
-	if ((device_id->driver_data == QCN9100_DEVICE_ID) &&
-	    (platform_get_qcn9100_userpd_id(plat_dev, &userpd_id))) {
+	if ((device_id->driver_data == QCN6122_DEVICE_ID) &&
+	    (platform_get_qcn6122_userpd_id(plat_dev, &userpd_id))) {
 		pr_err("Error: No userpd_id in device_tree\n");
 		CNSS_ASSERT(0);
 		ret = -ENODEV;
@@ -3650,6 +3774,9 @@ static int cnss_probe(struct platform_device *plat_dev)
 			 NODE_ID_BASE + 1)
 			plat_priv->board_info.board_id_override = bdf_pci1;
 
+		snprintf(plat_priv->firmware_name,
+			 sizeof(plat_priv->firmware_name),
+			 DEFAULT_FW_FILE_NAME);
 		break;
 	case QCA8074_DEVICE_ID:
 	case QCA8074V2_DEVICE_ID:
@@ -3661,26 +3788,31 @@ static int cnss_probe(struct platform_device *plat_dev)
 		plat_priv->service_id =  WLFW_SERVICE_ID_V01_HK;
 		plat_priv->board_info.board_id_override = bdf_integrated;
 		break;
-	case QCN9100_DEVICE_ID:
+	case QCN6122_DEVICE_ID:
 		plat_priv->bus_type = CNSS_BUS_AHB;
 		plat_priv->service_id = WLFW_SERVICE_ID_V01_HK;
 		plat_priv->userpd_id = userpd_id;
 		plat_priv->wlfw_service_instance_id =
-			WLFW_SERVICE_INS_ID_V01_QCN9100 + userpd_id;
+			WLFW_SERVICE_INS_ID_V01_QCN6122 + userpd_id;
 		if (plat_priv->wlfw_service_instance_id ==
-			WLFW_SERVICE_INS_ID_V01_QCN9100 + QCN9100_0)
+			WLFW_SERVICE_INS_ID_V01_QCN6122 + QCN6122_0)
 			plat_priv->board_info.board_id_override = bdf_pci0;
 		else if (plat_priv->wlfw_service_instance_id ==
-			WLFW_SERVICE_INS_ID_V01_QCN9100 + QCN9100_1)
+			WLFW_SERVICE_INS_ID_V01_QCN6122 + QCN6122_1)
 			plat_priv->board_info.board_id_override = bdf_pci1;
 		break;
 	default:
 		cnss_pr_err("No such device id %p\n", device_id);
-		return -ENODEV;
+		ret = -ENODEV;
+		goto out;
 	}
 	ret = cnss_set_device_name(plat_priv);
 	if (ret)
-		return -ENODEV;
+		goto out;
+
+	ret = cnss_rproc_register(plat_priv);
+	if (ret)
+		goto out;
 
 	cnss_set_caldata_support(plat_priv);
 	cnss_set_plat_priv(plat_dev, plat_priv);
@@ -3768,6 +3900,7 @@ free_res:
 reset_ctx:
 	platform_set_drvdata(plat_dev, NULL);
 	cnss_set_plat_priv(plat_dev, NULL);
+	cnss_rproc_unregister(plat_priv);
 out:
 	return ret;
 }
@@ -3792,6 +3925,7 @@ static int cnss_remove(struct platform_device *plat_dev)
 #endif
 	cnss_bus_deinit(plat_priv);
 	cnss_put_resources(plat_priv);
+	cnss_rproc_unregister(plat_priv);
 	platform_set_drvdata(plat_dev, NULL);
 
 	return 0;

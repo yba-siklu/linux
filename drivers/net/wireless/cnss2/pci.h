@@ -46,8 +46,8 @@
 #define QCA8074V2_DEVICE_ID             0xFFFE
 #define QCA6018_DEVICE_ID               0xFFFD
 #define QCA5018_DEVICE_ID               0xFFFC
-#define QCN9100_DEVICE_ID		0xFFFB
-#define QCN9100_DEVICE_BAR_SIZE		0x200000
+#define QCN6122_DEVICE_ID		0xFFFB
+#define QCN6122_DEVICE_BAR_SIZE		0x200000
 #define HOST_DDR_REGION_TYPE		0x1
 #define BDF_MEM_REGION_TYPE		0x2
 #define M3_DUMP_REGION_TYPE		0x3
@@ -245,4 +245,5 @@ void cnss_pci_pm_runtime_mark_last_busy(struct cnss_pci_data *pci_priv);
 int cnss_pci_update_status(struct cnss_pci_data *pci_priv,
 			   enum cnss_driver_status status);
 void cnss_pci_global_reset(struct cnss_pci_data *pci_priv);
+void cnss_free_soc_info(struct cnss_plat_data *plat_priv);
 #endif /* _CNSS_PCI_H */

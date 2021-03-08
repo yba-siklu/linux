@@ -93,7 +93,7 @@ static struct mhi_netbuf *mhi_netdev_alloc(struct device *dev,
 	struct mhi_buf *mhi_buf;
 	void *vaddr;
 
-	page = __dev_alloc_pages(gfp, order);
+	page = __dev_alloc_pages(gfp | __GFP_NOMEMALLOC, order);
 	if (!page)
 		return NULL;
 
@@ -127,7 +127,7 @@ static void mhi_netdev_unmap_page(struct device *dev,
 static int mhi_netdev_tmp_alloc(struct mhi_netdev *mhi_netdev, int nr_tre)
 {
 	struct mhi_device *mhi_dev = mhi_netdev->mhi_dev;
-	struct device *dev = mhi_dev->dev.parent;
+	struct device *dev = mhi_dev->dev.parent->parent;
 	struct device *dbg_dev = &mhi_dev->dev;
 	const u32 order = mhi_netdev->order;
 	int i, ret;
@@ -159,7 +159,7 @@ static int mhi_netdev_tmp_alloc(struct mhi_netdev *mhi_netdev, int nr_tre)
 static void mhi_netdev_queue(struct mhi_netdev *mhi_netdev)
 {
 	struct mhi_device *mhi_dev = mhi_netdev->mhi_dev;
-	struct device *dev = mhi_dev->dev.parent;
+	struct device *dev = mhi_dev->dev.parent->parent;
 	struct device *dbg_dev = &mhi_dev->dev;
 	struct mhi_netbuf *netbuf;
 	struct mhi_buf *mhi_buf;
@@ -228,7 +228,7 @@ static int mhi_netdev_alloc_pool(struct mhi_netdev *mhi_netdev)
 	struct mhi_netbuf *netbuf, **netbuf_pool;
 	struct mhi_buf *mhi_buf;
 	const u32 order = mhi_netdev->order;
-	struct device *dev = mhi_netdev->mhi_dev->dev.parent;
+	struct device *dev = mhi_netdev->mhi_dev->dev.parent->parent;
 
 	netbuf_pool = kmalloc_array(mhi_netdev->pool_size, sizeof(*netbuf_pool),
 				    GFP_KERNEL);
@@ -266,7 +266,7 @@ static void mhi_netdev_free_pool(struct mhi_netdev *mhi_netdev)
 {
 	int i;
 	struct mhi_netbuf *netbuf, **netbuf_pool = mhi_netdev->netbuf_pool;
-	struct device *dev = mhi_netdev->mhi_dev->dev.parent;
+	struct device *dev = mhi_netdev->mhi_dev->dev.parent->parent;
 	struct mhi_buf *mhi_buf;
 
 	for (i = 0; i < mhi_netdev->pool_size; i++) {
@@ -616,7 +616,7 @@ static void mhi_netdev_xfer_dl_cb(struct mhi_device *mhi_dev,
 	struct mhi_buf *mhi_buf = &netbuf->mhi_buf;
 	struct sk_buff *skb;
 	struct net_device *ndev = mhi_netdev->ndev;
-	struct device *dev = mhi_dev->dev.parent;
+	struct device *dev = mhi_dev->dev.parent->parent;
 	struct mhi_net_chain *chain = mhi_netdev->chain;
 
 	netbuf->unmap(dev, mhi_buf->dma_addr, mhi_buf->len, DMA_FROM_DEVICE);

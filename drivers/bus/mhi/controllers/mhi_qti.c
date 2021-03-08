@@ -20,6 +20,7 @@
 #include <linux/notifier.h>
 #include <linux/io.h>
 #include <linux/gpio/consumer.h>
+#include <linux/of_gpio.h>
 #include "mhi_qti.h"
 #include "../core/internal.h"
 
@@ -285,6 +286,37 @@ static struct mhi_channel_config mhi_sdx_mhi_channels[] = {
 		.auto_queue = false,
 		.auto_start = false,
 	},
+	{
+		.num = 105,
+		.name = "RMNET_CTL",
+		.num_elements =  128,
+		.event_ring = 8,
+		.dir = DMA_TO_DEVICE,
+		.doorbell = MHI_DB_BRST_DISABLE,
+		.ee_mask = 0x4,
+		.pollcfg = 0,
+		.lpm_notify = false,
+		.offload_channel = false,
+		.doorbell_mode_switch = false,
+		.auto_queue = false,
+		.auto_start = false,
+	},
+	{
+		.num = 106,
+		.name = "RMNET_CTL",
+		.num_elements =  128,
+		.event_ring = 9,
+		.dir = DMA_FROM_DEVICE,
+		.doorbell = MHI_DB_BRST_DISABLE,
+		.ee_mask = 0x4,
+		.pollcfg = 0,
+		.lpm_notify = false,
+		.offload_channel = false,
+		.doorbell_mode_switch = false,
+		.auto_queue = false,
+		.auto_start = false,
+	},
+
 };
 
 static struct mhi_event_config mhi_sdx_mhi_events[] = {
@@ -365,11 +397,31 @@ static struct mhi_event_config mhi_sdx_mhi_events[] = {
 		.client_managed = true,
 		.offload_channel = false,
 	},
+	{
+		.num_elements = 1024,
+		.irq_moderation_ms = 1,
+		.irq = 8,
+		.channel = 105,
+		.mode = MHI_DB_BRST_DISABLE,
+		.hardware_event = true,
+		.client_managed = false,
+		.offload_channel = false,
+	},
+	{
+		.num_elements = 1024,
+		.irq_moderation_ms = 0,
+		.irq = 9,
+		.channel = 106,
+		.mode = MHI_DB_BRST_DISABLE,
+		.hardware_event = true,
+		.client_managed = false,
+		.offload_channel = false,
+	},
 };
 
 static struct mhi_controller_config mhi_sdx_mhi_config = {
 	.max_channels = 128,
-	.timeout_ms = 2000,
+	.timeout_ms = 6000,
 	.use_bounce_buf = false,
 	.buf_len = 0,
 	.num_channels = ARRAY_SIZE(mhi_sdx_mhi_channels),
@@ -477,6 +529,7 @@ static int mhi_init_pci_dev(struct mhi_controller *mhi_cntrl)
 	 * Alloc one MSI vector for BHI + one vector per event ring, ideally...
 	 */
 	mhi_cntrl->nr_irqs = mhi_sdx_mhi_config.num_events + 1;
+	mhi_cntrl->nr_irqs = 1U << get_count_order(mhi_cntrl->nr_irqs);
 
 	nr_vectors = pci_alloc_irq_vectors(pci_dev, 1, mhi_cntrl->nr_irqs,
 				    PCI_IRQ_MSI);
@@ -1007,14 +1060,12 @@ int mhi_pci_probe(struct pci_dev *pci_dev,
 	mhi_ssr_negotiate = of_property_read_bool(mhi_cntrl->of_node, "mhi,ssr-negotiate");
 
 	if (mhi_ssr_negotiate) {
-		ret = of_property_read_u32(mhi_cntrl->of_node, "ap2mdm",
-						&ap2mdm_gpio);
-		if (ret != 0)
+		ap2mdm_gpio = of_get_named_gpio(mhi_cntrl->of_node, "ap2mdm-gpio", 0);
+		if (ap2mdm_gpio < 0)
 			pr_err("AP2MDM GPIO not configured\n");
 
-		ret = of_property_read_u32(mhi_cntrl->of_node, "mdm2ap",
-						&mdm2ap_gpio);
-		if (ret != 0)
+		mdm2ap_gpio = of_get_named_gpio(mhi_cntrl->of_node, "mdm2ap-gpio", 0);
+		if (mdm2ap_gpio < 0)
 			pr_err("MDM2AP GPIO not configured\n");
 
 		mhi_cntrl->mhi_panic_notifier.notifier_call = mhi_panic_handler;
