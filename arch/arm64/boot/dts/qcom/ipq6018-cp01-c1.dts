@@ -78,3 +78,13 @@
 		nand-bus-width = <8>;
 	};
 };
+
+&pcie_phy {
+	perst-gpio = <&tlmm 60 1>;
+
+	status = "ok";
+};
+
+&pcie0 {
+	status = "ok";
+};
