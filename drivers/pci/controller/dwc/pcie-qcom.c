@@ -41,24 +41,6 @@
 #define L23_CLK_RMV_DIS				BIT(2)
 #define L1_CLK_RMV_DIS				BIT(1)
 
-#define PCIE_ATU_CR1_OUTBOUND_6_GEN3		0xC00
-#define PCIE_ATU_CR2_OUTBOUND_6_GEN3		0xC04
-#define PCIE_ATU_LOWER_BASE_OUTBOUND_6_GEN3	0xC08
-#define PCIE_ATU_UPPER_BASE_OUTBOUND_6_GEN3	0xC0C
-#define PCIE_ATU_LIMIT_OUTBOUND_6_GEN3		0xC10
-#define PCIE_ATU_LOWER_TARGET_OUTBOUND_6_GEN3	0xC14
-#define PCIE_ATU_UPPER_TARGET_OUTBOUND_6_GEN3	0xC18
-
-#define PCIE_ATU_CR1_OUTBOUND_7_GEN3		0xE00
-#define PCIE_ATU_CR2_OUTBOUND_7_GEN3		0xE04
-#define PCIE_ATU_LOWER_BASE_OUTBOUND_7_GEN3	0xE08
-#define PCIE_ATU_UPPER_BASE_OUTBOUND_7_GEN3	0xE0C
-#define PCIE_ATU_LIMIT_OUTBOUND_7_GEN3		0xE10
-#define PCIE_ATU_LOWER_TARGET_OUTBOUND_7_GEN3	0xE14
-#define PCIE_ATU_UPPER_TARGET_OUTBOUND_7_GEN3 	0xE18
-
-#define PCIE20_COMMAND_STATUS			0x04
-#define BUS_MASTER_EN				0x7
 #define PCIE20_DEVICE_CONTROL2_STATUS2		0x98
 #define PCIE_CAP_CPL_TIMEOUT_DISABLE		0x10
 #define PCIE30_GEN3_RELATED_OFF			0x890
@@ -1492,9 +1474,7 @@ static int qcom_pcie_post_init_2_9_0(struct qcom_pcie *pcie)
 
 	writel(0, pcie->parf + PCIE20_PARF_Q2A_FLUSH);
 
-	writel(BUS_MASTER_EN, pci->dbi_base + PCIE20_COMMAND_STATUS);
-
-	writel(DBI_RO_WR_EN, pci->dbi_base + PCIE20_MISC_CONTROL_1_REG);
+	dw_pcie_dbi_ro_wr_en(pci);
 	writel(PCIE_CAP_LINK1_VAL, pci->dbi_base + offset + PCI_EXP_SLTCAP);
 
 	/* Configure PCIe link capabilities for ASPM */
@@ -1511,21 +1491,6 @@ static int qcom_pcie_post_init_2_9_0(struct qcom_pcie *pcie)
 	for (i = 0;i < 256;i++)
 		writel(0x0, pcie->parf + PCIE20_PARF_BDF_TO_SID_TABLE_N
 				+ (4 * i));
-
-	writel(0x4, pci->atu_base + PCIE_ATU_CR1_OUTBOUND_6_GEN3);
-	writel(0x90000000, pci->atu_base + PCIE_ATU_CR2_OUTBOUND_6_GEN3);
-	writel(0x0, pci->atu_base + PCIE_ATU_LOWER_BASE_OUTBOUND_6_GEN3);
-	writel(0x0, pci->atu_base + PCIE_ATU_UPPER_BASE_OUTBOUND_6_GEN3);
-	writel(0x00107FFFF, pci->atu_base + PCIE_ATU_LIMIT_OUTBOUND_6_GEN3);
-	writel(0x0, pci->atu_base + PCIE_ATU_LOWER_TARGET_OUTBOUND_6_GEN3);
-	writel(0x0, pci->atu_base + PCIE_ATU_UPPER_TARGET_OUTBOUND_6_GEN3);
-	writel(0x5, pci->atu_base + PCIE_ATU_CR1_OUTBOUND_7_GEN3);
-	writel(0x90000000, pci->atu_base + PCIE_ATU_CR2_OUTBOUND_7_GEN3);
-	writel(0x200000, pci->atu_base + PCIE_ATU_LOWER_BASE_OUTBOUND_7_GEN3);
-	writel(0x0, pci->atu_base + PCIE_ATU_UPPER_BASE_OUTBOUND_7_GEN3);
-	writel(0x7FFFFF, pci->atu_base + PCIE_ATU_LIMIT_OUTBOUND_7_GEN3);
-	writel(0x0, pci->atu_base + PCIE_ATU_LOWER_TARGET_OUTBOUND_7_GEN3);
-	writel(0x0, pci->atu_base + PCIE_ATU_UPPER_TARGET_OUTBOUND_7_GEN3);
 
 	return 0;
 }
@@ -1780,11 +1745,6 @@ static int qcom_pcie_probe(struct platform_device *pdev)
 		ret = PTR_ERR(pcie->elbi);
 		goto err_pm_runtime_put;
 	}
-
-	/* We need ATU for .post_init */
-	pci->atu_base = devm_platform_ioremap_resource_byname(pdev, "atu");
-	if (IS_ERR(pci->atu_base))
-		pci->atu_base = NULL;
 
 	pcie->phy = devm_phy_optional_get(dev, "pciephy");
 	if (IS_ERR(pcie->phy)) {
